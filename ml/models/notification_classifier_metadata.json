@@ -1,0 +1,72 @@
+{
+  "class_counts": {
+    "important": 333,
+    "low": 333,
+    "urgent": 334
+  },
+  "hash_algorithm": "Kotlin Int overflow hash: hash = 31 * hash + char.code; token = (hash & Int.MAX_VALUE) % 30000 + 1",
+  "input": {
+    "dtype": "int32",
+    "name": "token_ids",
+    "shape": [
+      1,
+      128
+    ]
+  },
+  "label_order": "[urgent, important, low]",
+  "labels": [
+    "urgent",
+    "important",
+    "low"
+  ],
+  "max_tokens": 128,
+  "metrics": {
+    "accuracy": 0.98989898989899,
+    "confusion_matrix": [
+      [
+        32,
+        1,
+        0
+      ],
+      [
+        0,
+        33,
+        0
+      ],
+      [
+        0,
+        0,
+        33
+      ]
+    ],
+    "macro_f1": 0.9898966704936853,
+    "per_class": {
+      "important": {
+        "f1": 0.9850746268656716,
+        "precision": 0.9705882352941176,
+        "recall": 1.0
+      },
+      "low": {
+        "f1": 1.0,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "urgent": {
+        "f1": 0.9846153846153847,
+        "precision": 1.0,
+        "recall": 0.9696969696969697
+      }
+    }
+  },
+  "output": {
+    "dtype": "float32",
+    "name": "tier_probabilities",
+    "shape": [
+      1,
+      3
+    ]
+  },
+  "token_regex": "[\\w$%]+",
+  "training_rows": 1000,
+  "vocab_size": 30001
+}

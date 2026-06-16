@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.attentionmanager.data.preferences";
+
+message FilterPreferences {
+  bool ai_filter_enabled = 1;
+  repeated int32 digest_minutes_of_day = 2 [deprecated = true];
+  bool onboarding_completed = 3;
+  bool notification_permission_granted = 4;
+  int32 digest_interval_hours = 5;
+}

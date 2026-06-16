@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">NeuraShhield</string>
+    <string name="notification_listener_label">NeuraShhield attention filter</string>
+    <string name="quick_tile_label">AI Filter</string>
+    <string name="digest_channel_name">Notification digests</string>
+    <string name="otp_channel_name">OTP helper</string>
+    <string name="widget_filter_on">AI Filter ON</string>
+    <string name="widget_filter_off">AI Filter OFF</string>
+</resources>
