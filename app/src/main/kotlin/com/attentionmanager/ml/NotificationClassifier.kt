@@ -26,7 +26,7 @@ class NotificationClassifier(
 
     private val modelRunner: NotificationModelRunner? by lazy {
         runCatching { modelRunnerFactory() }
-            .onFailure { Log.w(TAG, "TFLite classifier unavailable; heuristic fallback active.", it) }
+            .onFailure { safeLogWarning(TAG, "TFLite classifier unavailable; heuristic fallback active.", it) }
             .getOrNull()
     }
 
@@ -44,9 +44,11 @@ class NotificationClassifier(
         heuristicDecision(senderBoost, appContext)?.let { return it }
 
         val text = listOfNotNull(title, sender, body).joinToString(separator = " ")
-        val probabilities = modelRunner
-            ?.classify(NotificationTokenizer.tokenize(text))
-            ?.normalizeProbabilities()
+        val probabilities = runCatching {
+            modelRunner?.classify(NotificationTokenizer.tokenize(text))
+        }.onFailure {
+            safeLogWarning(TAG, "TFLite inference failed; using local fallback decision.", it)
+        }.getOrNull()?.normalizeProbabilities()
 
         if (probabilities != null) {
             val tier = tierFromProbabilities(probabilities, appContext)
@@ -145,20 +147,29 @@ class TensorFlowLiteNotificationModel(
 ) : NotificationModelRunner {
     private val compatibilityList = CompatibilityList()
     private var gpuDelegate: GpuDelegate? = null
-    private val interpreter: Interpreter = createInterpreter()
+    private val model: MappedByteBuffer = loadModel()
+    private var interpreter: Interpreter = createInterpreter()
 
     override fun classify(tokenIds: IntArray): FloatArray {
-        when (interpreter.getInputTensor(0).dataType()) {
-            DataType.INT32 -> {
-                val output = runWithTypedOutput(arrayOf(tokenIds))
+        var lastFailure: Throwable? = null
+        TOKEN_RETRY_MAX_IDS.forEachIndexed { index, maxTokenId ->
+            val safeTokenIds = tokenIds.coerceTokenIds(maxTokenId)
+            runCatching {
+                runWithCurrentInputType(safeTokenIds)
+            }.onSuccess { output ->
+                if (index > 0) {
+                    safeLogWarning(TAG, "TFLite inference recovered after clamping token ids to $maxTokenId.")
+                }
                 return output
+            }.onFailure { throwable ->
+                lastFailure = throwable
+                if (index == 0 && gpuDelegate != null) {
+                    safeLogWarning(TAG, "GPU delegate inference failed; retrying on CPU.", throwable)
+                    recreateCpuInterpreter()
+                }
             }
-            DataType.FLOAT32 -> {
-                val input = arrayOf(tokenIds.map { it.toFloat() }.toFloatArray())
-                return runWithTypedOutput(input)
-            }
-            else -> return runWithTypedOutput(arrayOf(tokenIds))
         }
+        throw lastFailure ?: IllegalStateException("TFLite inference failed without an exception.")
     }
 
     override fun close() {
@@ -168,8 +179,7 @@ class TensorFlowLiteNotificationModel(
     }
 
     private fun createInterpreter(): Interpreter {
-        val model = loadModel()
-        if (compatibilityList.isDelegateSupportedOnThisDevice) {
+        if (isGpuDelegateApiAvailable() && compatibilityList.isDelegateSupportedOnThisDevice) {
             runCatching {
                 val delegate = GpuDelegate()
                 val options = Interpreter.Options()
@@ -182,7 +192,7 @@ class TensorFlowLiteNotificationModel(
             }.onSuccess {
                 return it
             }.onFailure {
-                Log.w("NotificationClassifier", "GPU delegate failed; falling back to CPU.", it)
+                safeLogWarning(TAG, "GPU delegate failed; falling back to CPU.", it)
                 gpuDelegate?.close()
                 gpuDelegate = null
             }
@@ -192,6 +202,32 @@ class TensorFlowLiteNotificationModel(
             Interpreter.Options().setNumThreads(2)
         ).also { it.allocateTensors() }
     }
+
+    private fun isGpuDelegateApiAvailable(): Boolean =
+        runCatching {
+            Class.forName("org.tensorflow.lite.gpu.GpuDelegateFactory\$Options")
+            true
+        }.getOrDefault(false)
+
+    private fun recreateCpuInterpreter() {
+        runCatching { interpreter.close() }
+        gpuDelegate?.close()
+        gpuDelegate = null
+        interpreter = Interpreter(
+            model,
+            Interpreter.Options().setNumThreads(2)
+        ).also { it.allocateTensors() }
+    }
+
+    private fun runWithCurrentInputType(tokenIds: IntArray): FloatArray =
+        when (interpreter.getInputTensor(0).dataType()) {
+            DataType.INT32 -> runWithTypedOutput(arrayOf(tokenIds))
+            DataType.FLOAT32 -> {
+                val input = arrayOf(tokenIds.map { it.toFloat() }.toFloatArray())
+                runWithTypedOutput(input)
+            }
+            else -> runWithTypedOutput(arrayOf(tokenIds))
+        }
 
     private fun runWithTypedOutput(input: Any): FloatArray {
         val outputTensor = interpreter.getOutputTensor(0)
@@ -238,6 +274,31 @@ class TensorFlowLiteNotificationModel(
                 descriptor.startOffset,
                 descriptor.declaredLength
             )
+        }
+    }
+
+    companion object {
+        private const val TAG = "NotificationClassifier"
+        private val TOKEN_RETRY_MAX_IDS = intArrayOf(
+            NotificationTokenizer.MAX_TOKEN_ID,
+            9_999,
+            4_095,
+            1_023,
+            255,
+            1
+        )
+    }
+}
+
+private fun IntArray.coerceTokenIds(maxTokenId: Int): IntArray =
+    IntArray(size) { index -> this[index].coerceIn(0, maxTokenId) }
+
+private fun safeLogWarning(tag: String, message: String, throwable: Throwable? = null) {
+    runCatching {
+        if (throwable == null) {
+            Log.w(tag, message)
+        } else {
+            Log.w(tag, message, throwable)
         }
     }
 }

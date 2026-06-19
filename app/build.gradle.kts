@@ -81,6 +81,7 @@ dependencies {
     implementation(libs.androidx.paging.compose)
     implementation(libs.tensorflow.lite)
     implementation(libs.tensorflow.lite.gpu)
+    implementation(libs.tensorflow.lite.gpu.api)
     implementation(libs.play.services.location)
     implementation(libs.mlkit.language.id)
     ksp(libs.androidx.room.compiler)

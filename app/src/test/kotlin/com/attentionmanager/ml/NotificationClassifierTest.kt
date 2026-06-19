@@ -7,6 +7,7 @@ import com.attentionmanager.domain.model.PriorityTier
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class NotificationClassifierTest {
@@ -78,5 +79,33 @@ class NotificationClassifierTest {
         )
 
         assertEquals(PriorityTier.LOW, decision.tier)
+    }
+
+    @Test
+    fun `falls back when model inference throws`() {
+        val runner = mockk<NotificationModelRunner>(relaxed = true)
+        every { runner.classify(any()) } throws IllegalArgumentException("gather index out of bounds")
+
+        val classifier = NotificationClassifier { runner }
+        val decision = classifier.classify(
+            title = "Heads up",
+            body = "Please review this when you can",
+            sender = "Alex",
+            senderBoost = 0f,
+            appContext = AppContext(activityType = ActivityType.STILL, currentHour = 10)
+        )
+
+        assertEquals(PriorityTier.IMPORTANT, decision.tier)
+        assertEquals(DecisionSource.FALLBACK, decision.source)
+    }
+
+    @Test
+    fun `tokenizer never emits ids outside model vocabulary`() {
+        val tokenIds = NotificationTokenizer.tokenize(
+            text = "hello lottery 999999 meeting mañana नमस्ते " + "verylongtoken".repeat(40)
+        )
+
+        assertEquals(NotificationTokenizer.MAX_TOKENS, tokenIds.size)
+        assertTrue(tokenIds.all { it in 0..NotificationTokenizer.MAX_TOKEN_ID })
     }
 }

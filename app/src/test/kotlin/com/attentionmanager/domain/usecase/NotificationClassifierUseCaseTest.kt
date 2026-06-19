@@ -16,6 +16,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -59,6 +60,46 @@ class NotificationClassifierUseCaseTest {
         coVerify(exactly = 0) { notificationRepository.insert(any()) }
         coVerify(exactly = 0) { notificationRepository.countFromSenderSince(any(), any()) }
         coVerify(exactly = 0) { spamLogRepository.insert(any()) }
+    }
+
+    @Test
+    fun `returns silence outcome when feed persistence fails`() = runTest {
+        val notificationRepository = mockk<NotificationRepository>(relaxed = true)
+        val contactPriorityRepository = mockk<ContactPriorityRepository>()
+        val spamLogRepository = mockk<SpamLogRepository>(relaxed = true)
+        val contextSignalProvider = mockk<ContextSignalProvider>()
+        every { contextSignalProvider.currentContext } returns flowOf(
+            AppContext(activityType = ActivityType.STILL, currentHour = 12)
+        )
+        coEvery { contactPriorityRepository.boostFor(any(), any()) } returns 0f
+        coEvery { notificationRepository.insert(any()) } throws IllegalStateException("database unavailable")
+        coEvery { notificationRepository.countFromSenderSince(any(), any()) } returns 0
+
+        val useCase = NotificationClassifierUseCase(
+            notificationRepository = notificationRepository,
+            contactPriorityRepository = contactPriorityRepository,
+            spamLogRepository = spamLogRepository,
+            classifier = NotificationClassifier { FixedRunner(floatArrayOf(0.05f, 0.10f, 0.85f)) },
+            contextSignalProvider = contextSignalProvider
+        )
+
+        val result = useCase.process(
+            NotificationPayload(
+                packageName = "com.whatsapp",
+                title = "Alex",
+                body = "hello",
+                sender = "Alex",
+                timestamp = 1234L,
+                notificationKey = "message-key",
+                isGroupSummary = false
+            )
+        )
+
+        assertTrue(result is AttentionResult.Success)
+        val outcome = (result as AttentionResult.Success).value
+        assertNull(outcome.notificationId)
+        assertEquals(com.attentionmanager.domain.model.PriorityTier.LOW, outcome.decision.tier)
+        assertTrue(outcome.shouldSilenceOriginal)
     }
 
     private class FixedRunner(
